@@ -1,0 +1,119 @@
+diff --git a/distributions/LibreELEC/options b/distributions/LibreELEC/options
+index e98cfc8..a77e224 100644
+--- a/distributions/LibreELEC/options
++++ b/distributions/LibreELEC/options
+@@ -202,6 +202,9 @@
+   ADDON_PATH="$ADDON_VERSION/$PROJECT/$TARGET_ARCH"
+   ADDON_URL="$ADDON_SERVER_URL/$ADDON_PATH"
+ 
++# set compression type on kernel modules (no / xz, gzip)
++  KERNEL_MOD_COMPRESS="no"
++
+ # Default size of system partition, in MB, eg. 512
+   SYSTEM_SIZE=512
+ # Default system partition offset, in sectors, eg. 2048
+diff --git a/packages/compress/xz/package.mk b/packages/compress/xz/package.mk
+index 0d560b6..e10a036 100644
+--- a/packages/compress/xz/package.mk
++++ b/packages/compress/xz/package.mk
+@@ -24,6 +24,7 @@ PKG_LICENSE="GPL"
+ PKG_SITE="http://tukaani.org/xz/"
+ PKG_URL="http://tukaani.org/xz/$PKG_NAME-$PKG_VERSION.tar.bz2"
+ PKG_DEPENDS_HOST="ccache:host"
++PKG_DEPENDS_TARGET="toolchain"
+ PKG_PRIORITY="optional"
+ PKG_SECTION="toolchain/archivers"
+ PKG_SHORTDESC="xz: a free general-purpose data compression software with high compression ratio."
+@@ -34,10 +35,18 @@ PKG_AUTORECONF="no"
+ 
+ # never build shared or k0p happens when building
+ # on fedora due to host selinux/liblzma
+-PKG_CONFIGURE_OPTS_HOST="--disable-shared --enable-static \
++PKG_CONFIGURE_OPTS_HOST="--enable-shared --disable-static \
+                          --disable-lzmadec \
+                          --disable-lzmainfo \
+                          --enable-lzma-links \
+                          --disable-scripts \
+                          --disable-nls"
+ 
++PKG_CONFIGURE_OPTS_TARGET="--enable-shared --disable-static \
++                           --disable-lzmadec \
++                           --disable-lzmainfo \
++                           --enable-lzma-links \
++                           --disable-scripts \
++                           --disable-xz \
++                           --disable-xzdec \
++                           --disable-nls"
+diff --git a/packages/sysutils/kmod/package.mk b/packages/sysutils/kmod/package.mk
+index b2e6caf..3af4e34 100644
+--- a/packages/sysutils/kmod/package.mk
++++ b/packages/sysutils/kmod/package.mk
+@@ -23,7 +23,8 @@ PKG_ARCH="any"
+ PKG_LICENSE="GPL"
+ PKG_SITE="http://git.profusion.mobi/cgit.cgi/kmod.git/"
+ PKG_URL="http://ftp.kernel.org/pub/linux/utils/kernel/kmod/$PKG_NAME-$PKG_VERSION.tar.xz"
+-PKG_DEPENDS_TARGET="toolchain"
++PKG_DEPENDS_HOST="xz:host zlib:host"
++PKG_DEPENDS_TARGET="xz zlib"
+ PKG_PRIORITY="optional"
+ PKG_SECTION="system"
+ PKG_SHORTDESC="kmod offers the needed flexibility and fine grained control over insertion, removal, configuration and listing of kernel modules."
+@@ -40,8 +41,8 @@ PKG_CONFIGURE_OPTS_HOST="--enable-tools \
+                          --disable-gtk-doc-pdf \
+                          --disable-manpages \
+                          --with-gnu-ld \
+-                         --without-xz \
+-                         --without-zlib"
++                         --with-xz \
++                         --with-zlib"
+ 
+ PKG_CONFIGURE_OPTS_TARGET="--enable-tools \
+                            --enable-logging \
+@@ -51,8 +52,8 @@ PKG_CONFIGURE_OPTS_TARGET="--enable-tools \
+                            --disable-gtk-doc-pdf \
+                            --disable-manpages \
+                            --with-gnu-ld \
+-                           --without-xz \
+-                           --without-zlib"
++                           --with-xz \
++                           --with-zlib"
+ 
+ post_makeinstall_host() {
+   ln -sf kmod $ROOT/$TOOLCHAIN/bin/depmod
+diff --git a/scripts/image b/scripts/image
+index b66ea2a..cc445f5 100755
+--- a/scripts/image
++++ b/scripts/image
+@@ -221,17 +221,26 @@ fi
+     done
+   fi
+ 
+-# run depmod
+-  MODVER=$(basename $(ls -d $INSTALL/lib/modules/*))
+-  find $INSTALL/lib/modules/$MODVER/ -name *.ko | \
+-    sed -e "s,$INSTALL/lib/modules/$MODVER/,," > $INSTALL/lib/modules/$MODVER/modules.order
+-  $ROOT/$TOOLCHAIN/bin/depmod -b $INSTALL $MODVER 2> /dev/null
+-
+ # strip kernel modules
+   for MOD in `find $INSTALL/lib/modules/ -type f -name *.ko`; do
+     $STRIP --strip-debug $MOD
+   done
+ 
++# compress kernel modules
++  for MOD in `find $INSTALL/lib/modules/ -type f -name *.ko`; do
++    if [ "$KERNEL_MOD_COMPRESS" = xz ]; then
++      xz -9e -q $MOD
++    elif [ "$KERNEL_MOD_COMPRESS" = gzip ]; then
++      gzip -9 -q $MOD
++    fi
++  done
++
++# run depmod
++  MODVER=$(basename $(ls -d $INSTALL/lib/modules/*))
++  find $INSTALL/lib/modules/$MODVER/ -name *.ko* | \
++    sed -e "s,$INSTALL/lib/modules/$MODVER/,," > $INSTALL/lib/modules/$MODVER/modules.order
++  $ROOT/$TOOLCHAIN/bin/depmod -b $INSTALL $MODVER 2> /dev/null
++
+ # make target dir
+   mkdir -p $TARGET_IMG
+     rm -rf $TARGET_IMG/$IMAGE_NAME.kernel
